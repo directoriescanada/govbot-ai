@@ -7,7 +7,11 @@ import {
   rateLimitResponse,
 } from "@/lib/api-utils";
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error("STRIPE_SECRET_KEY not configured");
+  return new Stripe(key);
+}
 
 const PRICE_IDS: Record<string, string> = {
   scout: process.env.STRIPE_PRICE_SCOUT || "",
@@ -54,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     // Create Stripe customer if needed
     if (!customerId) {
-      const customer = await stripe.customers.create({
+      const customer = await getStripe().customers.create({
         email: user.email || profile?.email,
         name: profile?.company_name || undefined,
         metadata: { supabase_user_id: user.id },
@@ -69,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-    const session = await stripe.checkout.sessions.create({
+    const session = await getStripe().checkout.sessions.create({
       customer: customerId,
       mode: "subscription",
       line_items: [{ price: priceId, quantity: 1 }],
