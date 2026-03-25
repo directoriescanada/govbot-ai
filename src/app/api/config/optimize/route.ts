@@ -120,7 +120,7 @@ function getMockOptimization(config: GovBotConfig): OptimizationResponse {
 
 export async function POST() {
   try {
-    const config = getConfig();
+    const config = await getConfig();
     const apiKey = process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
@@ -193,7 +193,7 @@ Provide 4-8 specific, actionable recommendations. Each reason should reference r
     console.error("Config optimization error:", error);
 
     // Fall back to mock on any error
-    const config = getConfig();
+    const config = await getConfig();
     return NextResponse.json(getMockOptimization(config));
   }
 }
@@ -202,7 +202,7 @@ Provide 4-8 specific, actionable recommendations. Each reason should reference r
 
 export async function GET() {
   try {
-    const config = getConfig();
+    const config = await getConfig();
     const apiKey = process.env.ANTHROPIC_API_KEY;
 
     if (!apiKey) {
@@ -253,7 +253,7 @@ export async function GET() {
     });
   } catch (error) {
     console.error("Config preview error:", error);
-    const config = getConfig();
+    const config = await getConfig();
     const mock = getMockOptimization(config);
     return NextResponse.json({
       recommendations: mock.recommendations,

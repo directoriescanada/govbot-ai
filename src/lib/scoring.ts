@@ -1,6 +1,6 @@
 import { Tender, BidComplexity, TenderBlocker } from "@/types/tender";
 import { SCORING_WEIGHTS } from "./constants";
-import { getConfigSection } from "./config";
+import { getConfigSectionSync as getConfigSection } from "./config-sync";
 
 export function computeOpportunityScore(tender: Tender): number {
   const scoringCfg = getConfigSection("scoring");

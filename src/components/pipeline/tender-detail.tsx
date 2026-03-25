@@ -41,6 +41,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { CompetitorIntel } from "@/components/pipeline/competitor-intel";
 
 interface TenderDetailProps {
   tender: Tender;
@@ -436,6 +437,15 @@ export function TenderDetail({ tender }: TenderDetailProps) {
           </Section>
         </TabsContent>
       </Tabs>
+
+      {/* Competitor Intelligence */}
+      <div className="mt-6">
+        <CompetitorIntel
+          department={tender.department}
+          category={tender.category}
+          estimatedValue={tender.estimatedValue}
+        />
+      </div>
     </div>
   );
 }

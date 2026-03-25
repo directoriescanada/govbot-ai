@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { ContractOp, FulfillmentJob, AICategory } from "@/types/tender";
-import { CATEGORY_LABELS } from "@/lib/fulfillment";
+import { CATEGORY_LABELS } from "@/lib/constants";
 import { formatCurrency } from "@/lib/scoring";
 
 import { Button } from "@/components/ui/button";

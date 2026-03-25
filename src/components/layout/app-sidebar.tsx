@@ -14,7 +14,10 @@ import {
   Settings,
   Landmark,
   ChevronRight,
+  GitBranch,
+  LogOut,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 const PRIMARY_NAV = [
   { href: "/", label: "Opportunity Inbox", icon: Inbox },
@@ -22,6 +25,7 @@ const PRIMARY_NAV = [
   { href: "/bid-queue", label: "Bid Queue", icon: ListChecks },
   { href: "/fulfill", label: "Fulfill Contract", icon: Zap },
   { href: "/ops", label: "Operations", icon: Briefcase },
+  { href: "/pipeline", label: "Pipeline", icon: GitBranch },
   { href: "/analytics", label: "Award Intel", icon: BarChart3 },
 ];
 
@@ -32,6 +36,26 @@ const SECONDARY_NAV = [
 
 export function AppSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      // Clear demo session cookie
+      await fetch("/api/auth/demo", { method: "DELETE" });
+      // Clear Supabase session if present
+      try {
+        const { createClient } = await import("@/lib/supabase/client");
+        const supabase = createClient();
+        await supabase.auth.signOut();
+      } catch {
+        // Supabase not configured — that's fine
+      }
+    } catch {
+      // Ignore errors
+    }
+    router.push("/login");
+    router.refresh();
+  };
 
   const isLoginPage = pathname === "/login" || pathname === "/signup";
   if (isLoginPage) return null;
@@ -109,11 +133,18 @@ export function AppSidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="border-t border-border p-4">
-        <div className="flex items-center gap-2">
+      <div className="border-t border-border p-3 space-y-2">
+        <div className="flex items-center gap-2 px-1">
           <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
           <span className="text-[11px] text-muted-foreground">3 sources connected</span>
         </div>
+        <button
+          onClick={handleLogout}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <LogOut className="h-[18px] w-[18px]" strokeWidth={1.5} />
+          Sign out
+        </button>
       </div>
     </aside>
   );

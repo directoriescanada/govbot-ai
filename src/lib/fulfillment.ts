@@ -1,13 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════
 // GovBot AI — Fulfillment Engine
-// Local state management for fulfillment jobs and contract ops.
-// In production these would persist to Supabase; for now uses
-// module-level storage that survives the Node.js process lifetime.
+// Manages fulfillment jobs and contract ops.
+// Uses Supabase when configured, falls back to in-memory Maps.
 // ═══════════════════════════════════════════════════════════════════
 
 import { FulfillmentJob, FulfillmentStatus, ContractOp, ContractStatus, AICategory } from "@/types/tender";
+import { useSupabase } from "@/lib/db";
+// Dynamic import to avoid bundling server-only code into client components
+async function getServiceClient() {
+  const { createServiceClient } = await import("@/lib/supabase/server");
+  return createServiceClient();
+}
 
-// ─── In-process store (replace with Supabase in production) ──────────────────
+// ─── In-process store (demo-mode fallback) ──────────────────────────────────
 
 const jobStore = new Map<string, FulfillmentJob>();
 const contractStore = new Map<string, ContractOp>();
@@ -100,9 +105,56 @@ const DEMO_CONTRACTS: ContractOp[] = [
 // Initialize demo data
 DEMO_CONTRACTS.forEach((c) => contractStore.set(c.id, c));
 
+// ─── Row mappers ──────────────────────────────────────────────────────────────
+
+function rowToJob(row: Record<string, unknown>): FulfillmentJob {
+  return {
+    id: row.id as string,
+    tenderId: row.tender_id as string,
+    tenderTitle: row.tender_title as string,
+    department: (row.department as string) ?? "",
+    category: (row.category as string) as AICategory,
+    status: row.status as FulfillmentStatus,
+    brief: (row.brief as string) ?? "",
+    inputContent: (row.input_content as string) ?? "",
+    output: (row.output as string) ?? "",
+    reviewNotes: (row.review_notes as string) ?? "",
+    estimatedAICost: Number(row.estimated_ai_cost ?? 0),
+    agentLog: (row.agent_log as string[]) ?? [],
+    createdAt: row.created_at ? String(row.created_at) : "",
+    completedAt: row.completed_at ? String(row.completed_at) : undefined,
+  };
+}
+
+function rowToContract(row: Record<string, unknown>): ContractOp {
+  return {
+    id: row.id as string,
+    tenderId: row.tender_id as string,
+    externalId: (row.external_id as string) ?? undefined,
+    title: row.title as string,
+    department: (row.department as string) ?? "",
+    category: (row.category as string) as AICategory,
+    contractValue: Number(row.contract_value ?? 0),
+    bidPrice: Number(row.bid_price ?? 0),
+    wonDate: row.won_date ? String(row.won_date) : "",
+    startDate: row.start_date ? String(row.start_date) : "",
+    deliverableDue: row.deliverable_due ? String(row.deliverable_due) : "",
+    deliverableDescription: (row.deliverable_description as string) ?? "",
+    status: row.status as ContractStatus,
+    fulfillmentJobId: (row.fulfillment_job_id as string) ?? undefined,
+    invoiceNumber: (row.invoice_number as string) ?? undefined,
+    invoiceDate: row.invoice_date ? String(row.invoice_date) : undefined,
+    paidDate: row.paid_date ? String(row.paid_date) : undefined,
+    marginPercent: Number(row.margin_percent ?? 0),
+    aiCostActual: Number(row.ai_cost_actual ?? 0),
+    notes: (row.notes as string) ?? "",
+    createdAt: row.created_at ? String(row.created_at) : "",
+  };
+}
+
 // ─── Fulfillment Job CRUD ─────────────────────────────────────────────────────
 
-export function createJob(data: Omit<FulfillmentJob, "id" | "status" | "output" | "agentLog" | "createdAt">): FulfillmentJob {
+export async function createJob(data: Omit<FulfillmentJob, "id" | "status" | "output" | "agentLog" | "createdAt">): Promise<FulfillmentJob> {
   const job: FulfillmentJob = {
     ...data,
     id: `job-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -111,70 +163,231 @@ export function createJob(data: Omit<FulfillmentJob, "id" | "status" | "output" 
     agentLog: [],
     createdAt: new Date().toISOString(),
   };
-  jobStore.set(job.id, job);
-  return job;
+
+  if (!useSupabase()) {
+    jobStore.set(job.id, job);
+    return job;
+  }
+
+  const sb = await getServiceClient();
+  const { data: row, error } = await sb
+    .from("fulfillment_jobs")
+    .insert({
+      id: job.id,
+      tender_id: job.tenderId,
+      tender_title: job.tenderTitle,
+      department: job.department,
+      category: job.category,
+      status: job.status,
+      brief: job.brief,
+      input_content: job.inputContent,
+      output: job.output,
+      review_notes: job.reviewNotes ?? "",
+      estimated_ai_cost: job.estimatedAICost ?? 0,
+      agent_log: job.agentLog,
+      created_at: job.createdAt,
+    })
+    .select()
+    .single();
+  if (error || !row) {
+    console.error("Supabase fulfillment_jobs insert error:", error);
+    // fallback to in-memory
+    jobStore.set(job.id, job);
+    return job;
+  }
+  return rowToJob(row);
 }
 
-export function getJob(id: string): FulfillmentJob | undefined {
-  return jobStore.get(id);
+export async function getJob(id: string): Promise<FulfillmentJob | undefined> {
+  if (!useSupabase()) {
+    return jobStore.get(id);
+  }
+  const sb = await getServiceClient();
+  const { data, error } = await sb.from("fulfillment_jobs").select("*").eq("id", id).single();
+  if (error || !data) return undefined;
+  return rowToJob(data);
 }
 
-export function listJobs(): FulfillmentJob[] {
-  return Array.from(jobStore.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+export async function listJobs(): Promise<FulfillmentJob[]> {
+  if (!useSupabase()) {
+    return Array.from(jobStore.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+  const sb = await getServiceClient();
+  const { data, error } = await sb
+    .from("fulfillment_jobs")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map(rowToJob);
 }
 
-export function updateJob(id: string, patch: Partial<FulfillmentJob>): FulfillmentJob | null {
-  const job = jobStore.get(id);
-  if (!job) return null;
-  const updated = { ...job, ...patch };
-  jobStore.set(id, updated);
-  return updated;
+export async function updateJob(id: string, patch: Partial<FulfillmentJob>): Promise<FulfillmentJob | null> {
+  if (!useSupabase()) {
+    const job = jobStore.get(id);
+    if (!job) return null;
+    const updated = { ...job, ...patch };
+    jobStore.set(id, updated);
+    return updated;
+  }
+
+  // Map camelCase patch to snake_case
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.status !== undefined) dbPatch.status = patch.status;
+  if (patch.output !== undefined) dbPatch.output = patch.output;
+  if (patch.reviewNotes !== undefined) dbPatch.review_notes = patch.reviewNotes;
+  if (patch.estimatedAICost !== undefined) dbPatch.estimated_ai_cost = patch.estimatedAICost;
+  if (patch.agentLog !== undefined) dbPatch.agent_log = patch.agentLog;
+  if (patch.completedAt !== undefined) dbPatch.completed_at = patch.completedAt;
+  if (patch.brief !== undefined) dbPatch.brief = patch.brief;
+  if (patch.inputContent !== undefined) dbPatch.input_content = patch.inputContent;
+
+  const sb = await getServiceClient();
+  const { data, error } = await sb
+    .from("fulfillment_jobs")
+    .update(dbPatch)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error || !data) return null;
+  return rowToJob(data);
 }
 
-export function setJobStatus(id: string, status: FulfillmentStatus): FulfillmentJob | null {
+export async function setJobStatus(id: string, status: FulfillmentStatus): Promise<FulfillmentJob | null> {
   return updateJob(id, { status });
 }
 
 // ─── Contract Ops CRUD ────────────────────────────────────────────────────────
 
-export function createContract(data: Omit<ContractOp, "id" | "createdAt">): ContractOp {
+export async function createContract(data: Omit<ContractOp, "id" | "createdAt">): Promise<ContractOp> {
   const contract: ContractOp = {
     ...data,
     id: `c-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     createdAt: new Date().toISOString(),
   };
-  contractStore.set(contract.id, contract);
-  return contract;
+
+  if (!useSupabase()) {
+    contractStore.set(contract.id, contract);
+    return contract;
+  }
+
+  const sb = await getServiceClient();
+  const { data: row, error } = await sb
+    .from("contracts")
+    .insert({
+      id: contract.id,
+      tender_id: contract.tenderId,
+      external_id: contract.externalId ?? null,
+      title: contract.title,
+      department: contract.department,
+      category: contract.category,
+      contract_value: contract.contractValue,
+      bid_price: contract.bidPrice,
+      won_date: contract.wonDate ?? null,
+      start_date: contract.startDate ?? null,
+      deliverable_due: contract.deliverableDue || null,
+      deliverable_description: contract.deliverableDescription ?? "",
+      status: contract.status,
+      fulfillment_job_id: contract.fulfillmentJobId ?? null,
+      invoice_number: contract.invoiceNumber ?? null,
+      invoice_date: contract.invoiceDate ?? null,
+      paid_date: contract.paidDate ?? null,
+      margin_percent: contract.marginPercent,
+      ai_cost_actual: contract.aiCostActual,
+      notes: contract.notes,
+      created_at: contract.createdAt,
+    })
+    .select()
+    .single();
+  if (error || !row) {
+    console.error("Supabase contracts insert error:", error);
+    contractStore.set(contract.id, contract);
+    return contract;
+  }
+  return rowToContract(row);
 }
 
-export function getContract(id: string): ContractOp | undefined {
-  return contractStore.get(id);
+export async function getContract(id: string): Promise<ContractOp | undefined> {
+  if (!useSupabase()) {
+    return contractStore.get(id);
+  }
+  const sb = await getServiceClient();
+  const { data, error } = await sb.from("contracts").select("*").eq("id", id).single();
+  if (error || !data) return undefined;
+  return rowToContract(data);
 }
 
-export function listContracts(): ContractOp[] {
-  return Array.from(contractStore.values()).sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-  );
+export async function listContracts(): Promise<ContractOp[]> {
+  if (!useSupabase()) {
+    return Array.from(contractStore.values()).sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }
+  const sb = await getServiceClient();
+  const { data, error } = await sb
+    .from("contracts")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error || !data) return [];
+  return data.map(rowToContract);
 }
 
-export function updateContract(id: string, patch: Partial<ContractOp>): ContractOp | null {
-  const contract = contractStore.get(id);
-  if (!contract) return null;
-  const updated = { ...contract, ...patch };
-  contractStore.set(id, updated);
-  return updated;
+export async function updateContract(id: string, patch: Partial<ContractOp>): Promise<ContractOp | null> {
+  if (!useSupabase()) {
+    const contract = contractStore.get(id);
+    if (!contract) return null;
+    const updated = { ...contract, ...patch };
+    contractStore.set(id, updated);
+    return updated;
+  }
+
+  // Map camelCase patch to snake_case
+  const dbPatch: Record<string, unknown> = {};
+  if (patch.tenderId !== undefined) dbPatch.tender_id = patch.tenderId;
+  if (patch.externalId !== undefined) dbPatch.external_id = patch.externalId;
+  if (patch.title !== undefined) dbPatch.title = patch.title;
+  if (patch.department !== undefined) dbPatch.department = patch.department;
+  if (patch.category !== undefined) dbPatch.category = patch.category;
+  if (patch.contractValue !== undefined) dbPatch.contract_value = patch.contractValue;
+  if (patch.bidPrice !== undefined) dbPatch.bid_price = patch.bidPrice;
+  if (patch.wonDate !== undefined) dbPatch.won_date = patch.wonDate;
+  if (patch.startDate !== undefined) dbPatch.start_date = patch.startDate;
+  if (patch.deliverableDue !== undefined) dbPatch.deliverable_due = patch.deliverableDue;
+  if (patch.deliverableDescription !== undefined) dbPatch.deliverable_description = patch.deliverableDescription;
+  if (patch.status !== undefined) dbPatch.status = patch.status;
+  if (patch.fulfillmentJobId !== undefined) dbPatch.fulfillment_job_id = patch.fulfillmentJobId;
+  if (patch.invoiceNumber !== undefined) dbPatch.invoice_number = patch.invoiceNumber;
+  if (patch.invoiceDate !== undefined) dbPatch.invoice_date = patch.invoiceDate;
+  if (patch.paidDate !== undefined) dbPatch.paid_date = patch.paidDate;
+  if (patch.marginPercent !== undefined) dbPatch.margin_percent = patch.marginPercent;
+  if (patch.aiCostActual !== undefined) dbPatch.ai_cost_actual = patch.aiCostActual;
+  if (patch.notes !== undefined) dbPatch.notes = patch.notes;
+
+  const sb = await getServiceClient();
+  const { data, error } = await sb
+    .from("contracts")
+    .update(dbPatch)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error || !data) return null;
+  return rowToContract(data);
 }
 
-export function deleteContract(id: string): boolean {
-  return contractStore.delete(id);
+export async function deleteContract(id: string): Promise<boolean> {
+  if (!useSupabase()) {
+    return contractStore.delete(id);
+  }
+  const sb = await getServiceClient();
+  const { error } = await sb.from("contracts").delete().eq("id", id);
+  return !error;
 }
 
 // ─── Ops Summary ──────────────────────────────────────────────────────────────
 
-export function getOpsSummary() {
-  const contracts = listContracts();
+export async function getOpsSummary() {
+  const contracts = await listContracts();
   const active = contracts.filter((c) => ["active", "in_fulfillment"].includes(c.status));
   const invoiced = contracts.filter((c) => ["invoiced", "paid"].includes(c.status));
   const paid = contracts.filter((c) => c.status === "paid");

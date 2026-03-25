@@ -13,7 +13,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { ContractOp, ContractStatus, AICategory, OpsSummary } from "@/types/tender";
-import { CATEGORY_LABELS, STATUS_LABELS, STATUS_COLORS } from "@/lib/fulfillment";
+import { CATEGORY_LABELS, STATUS_LABELS, STATUS_COLORS } from "@/lib/constants";
 import { formatCurrency, daysUntil } from "@/lib/scoring";
 
 import { Button } from "@/components/ui/button";

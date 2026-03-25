@@ -8,53 +8,224 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Tender } from "@/types/tender";
 import { cn } from "@/lib/utils";
 import {
   Inbox,
   Eye,
+  Search,
   FileEdit,
   Send,
   Trophy,
   XCircle,
   ArrowRight,
+  ChevronDown,
+  Plus,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 
 const STAGES = [
-  { key: "reviewing", label: "Reviewing", icon: Eye, color: "text-blue-600 bg-blue-50 border-blue-200" },
-  { key: "bidding", label: "Writing Bid", icon: FileEdit, color: "text-amber-600 bg-amber-50 border-amber-200" },
+  { key: "identified", label: "Identified", icon: Eye, color: "text-blue-600 bg-blue-50 border-blue-200" },
+  { key: "qualifying", label: "Qualifying", icon: Search, color: "text-indigo-600 bg-indigo-50 border-indigo-200" },
+  { key: "bidding", label: "Bid Writing", icon: FileEdit, color: "text-amber-600 bg-amber-50 border-amber-200" },
   { key: "submitted", label: "Submitted", icon: Send, color: "text-purple-600 bg-purple-50 border-purple-200" },
   { key: "won", label: "Won", icon: Trophy, color: "text-emerald-600 bg-emerald-50 border-emerald-200" },
   { key: "lost", label: "Lost", icon: XCircle, color: "text-red-500 bg-red-50 border-red-200" },
 ];
 
-function assignDemoStages(tenders: Tender[]) {
+type StageKey = "identified" | "qualifying" | "bidding" | "submitted" | "won" | "lost";
+
+interface PipelineTender extends Tender {
+  pipelineStage: StageKey;
+  stageNotes?: string;
+}
+
+function assignDemoStages(tenders: Tender[]): PipelineTender[] {
   const sorted = [...tenders].sort((a, b) => (b.computedScore || 0) - (a.computedScore || 0));
-  const staged: Record<string, Tender[]> = {
-    reviewing: [],
-    bidding: [],
-    submitted: [],
-    won: [],
-    lost: [],
-  };
-
-  sorted.forEach((t, i) => {
-    if (i < 3) staged.reviewing.push(t);
-    else if (i < 5) staged.bidding.push(t);
-    else if (i < 7) staged.submitted.push(t);
-    else if (i < 9) staged.won.push(t);
-    else staged.lost.push(t);
+  return sorted.map((t, i): PipelineTender => {
+    let stage: StageKey = "identified";
+    if (i < 3) stage = "identified";
+    else if (i < 5) stage = "qualifying";
+    else if (i < 7) stage = "bidding";
+    else if (i < 8) stage = "submitted";
+    else if (i < 9) stage = "won";
+    else stage = "lost";
+    return { ...t, pipelineStage: stage };
   });
+}
 
-  return staged;
+// Modal for creating a contract when a tender is moved to "Won"
+function WonContractModal({
+  tender,
+  onClose,
+  onSubmit,
+}: {
+  tender: PipelineTender;
+  onClose: () => void;
+  onSubmit: (data: Record<string, string | number>) => void;
+}) {
+  const [contractValue, setContractValue] = useState(String(tender.estimatedValue || 0));
+  const [bidPrice, setBidPrice] = useState(String(Math.round((tender.estimatedValue || 0) * 0.82)));
+  const [deliverableDesc, setDeliverableDesc] = useState("");
+  const [deliverableDue, setDeliverableDue] = useState("");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <Card className="w-full max-w-lg p-6 bg-white shadow-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Create Contract from Won Tender</h2>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <p className="text-sm text-muted-foreground mb-4">{tender.title}</p>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <Label className="text-xs">Contract Value ($)</Label>
+              <Input
+                type="number"
+                value={contractValue}
+                onChange={(e) => setContractValue(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Our Bid Price ($)</Label>
+              <Input
+                type="number"
+                value={bidPrice}
+                onChange={(e) => setBidPrice(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <Label className="text-xs">Deliverable Due Date</Label>
+            <Input
+              type="date"
+              value={deliverableDue}
+              onChange={(e) => setDeliverableDue(e.target.value)}
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs">Deliverable Description</Label>
+            <Textarea
+              rows={3}
+              value={deliverableDesc}
+              onChange={(e) => setDeliverableDesc(e.target.value)}
+              placeholder="What needs to be delivered..."
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            onClick={() => onSubmit({
+              contractValue: Number(contractValue),
+              bidPrice: Number(bidPrice),
+              deliverableDue,
+              deliverableDesc,
+            })}
+          >
+            <Trophy className="mr-2 h-4 w-4" />
+            Create Contract
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// Modal for recording loss reason
+function LostReasonModal({
+  tender,
+  onClose,
+  onSubmit,
+}: {
+  tender: PipelineTender;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+
+  const reasons = [
+    "Price too high",
+    "Competitor had better experience",
+    "Didn't meet technical requirements",
+    "Incumbency advantage",
+    "Missed deadline",
+    "Other",
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <Card className="w-full max-w-md p-6 bg-white shadow-2xl">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold">Record Loss Reason</h2>
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <p className="text-sm text-muted-foreground mb-4">{tender.title}</p>
+
+        <div className="space-y-2 mb-4">
+          {reasons.map((r) => (
+            <button
+              key={r}
+              onClick={() => setReason(r)}
+              className={cn(
+                "w-full text-left px-3 py-2 rounded-lg text-sm border transition-colors",
+                reason === r
+                  ? "border-primary bg-primary/5 text-primary font-medium"
+                  : "border-border hover:bg-accent"
+              )}
+            >
+              {r}
+            </button>
+          ))}
+        </div>
+
+        {reason === "Other" && (
+          <Textarea
+            className="mb-4"
+            rows={2}
+            placeholder="Describe the reason..."
+            onChange={(e) => setReason(e.target.value || "Other")}
+          />
+        )}
+
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="destructive"
+            onClick={() => onSubmit(reason)}
+            disabled={!reason}
+          >
+            Record Loss
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
 }
 
 export default function PipelinePage() {
   const [mounted, setMounted] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tenders, setTenders] = useState<Tender[]>([]);
+  const [pipelineTenders, setPipelineTenders] = useState<PipelineTender[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [showStageMenu, setShowStageMenu] = useState<string | null>(null);
+  const [wonModal, setWonModal] = useState<PipelineTender | null>(null);
+  const [lostModal, setLostModal] = useState<PipelineTender | null>(null);
 
   const loadTenders = useCallback(async () => {
     setIsLoading(true);
@@ -65,16 +236,14 @@ export default function PipelinePage() {
       const fetched: Tender[] = json.data || [];
 
       if (fetched.length > 0) {
-        setTenders(fetched);
+        setPipelineTenders(assignDemoStages(fetched));
       } else {
-        setTenders(
-          MOCK_TENDERS.map((t) => ({ ...t, computedScore: computeOpportunityScore(t) }))
-        );
+        const scored = MOCK_TENDERS.map((t) => ({ ...t, computedScore: computeOpportunityScore(t) }));
+        setPipelineTenders(assignDemoStages(scored));
       }
     } catch {
-      setTenders(
-        MOCK_TENDERS.map((t) => ({ ...t, computedScore: computeOpportunityScore(t) }))
-      );
+      const scored = MOCK_TENDERS.map((t) => ({ ...t, computedScore: computeOpportunityScore(t) }));
+      setPipelineTenders(assignDemoStages(scored));
     } finally {
       setIsLoading(false);
       setMounted(true);
@@ -85,11 +254,102 @@ export default function PipelinePage() {
     loadTenders();
   }, [loadTenders]);
 
-  const stagedTenders = useMemo(() => assignDemoStages(tenders), [tenders]);
-  const selected = tenders.find((t) => t.id === selectedId) || null;
+  // Group tenders by stage
+  const stagedTenders = useMemo(() => {
+    const grouped: Record<StageKey, PipelineTender[]> = {
+      identified: [], qualifying: [], bidding: [], submitted: [], won: [], lost: [],
+    };
+    pipelineTenders.forEach((t) => {
+      if (grouped[t.pipelineStage]) {
+        grouped[t.pipelineStage].push(t);
+      }
+    });
+    return grouped;
+  }, [pipelineTenders]);
 
-  const totalPipelineValue = tenders.reduce((s, t) => s + (t.estimatedValue || 0), 0);
+  const selected = pipelineTenders.find((t) => t.id === selectedId) || null;
+  const totalPipelineValue = pipelineTenders.reduce((s, t) => s + (t.estimatedValue || 0), 0);
   const wonValue = stagedTenders.won.reduce((s, t) => s + (t.estimatedValue || 0), 0);
+
+  // Move a tender to a different stage
+  const moveToStage = (tenderId: string, newStage: StageKey) => {
+    const tender = pipelineTenders.find((t) => t.id === tenderId);
+    if (!tender) return;
+
+    // If moving to "won", show the contract modal
+    if (newStage === "won") {
+      setWonModal(tender);
+      return;
+    }
+
+    // If moving to "lost", show the loss reason modal
+    if (newStage === "lost") {
+      setLostModal(tender);
+      return;
+    }
+
+    // Direct move for other stages
+    setPipelineTenders((prev) =>
+      prev.map((t) => (t.id === tenderId ? { ...t, pipelineStage: newStage } : t))
+    );
+    setShowStageMenu(null);
+  };
+
+  // Handle won contract creation
+  const handleWonSubmit = async (data: Record<string, string | number>) => {
+    if (!wonModal) return;
+    try {
+      await fetch("/api/contracts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenderId: wonModal.id,
+          externalId: wonModal.externalId || "",
+          title: wonModal.title,
+          department: wonModal.department,
+          category: wonModal.aiCategories?.[0] || "WRITING",
+          contractValue: data.contractValue,
+          bidPrice: data.bidPrice,
+          wonDate: new Date().toISOString(),
+          deliverableDue: data.deliverableDue ? new Date(data.deliverableDue as string).toISOString() : undefined,
+          deliverableDescription: data.deliverableDesc,
+          status: "active",
+        }),
+      });
+    } catch {
+      // Contract creation failed — still move the stage locally
+    }
+
+    setPipelineTenders((prev) =>
+      prev.map((t) => (t.id === wonModal.id ? { ...t, pipelineStage: "won" as StageKey } : t))
+    );
+    setWonModal(null);
+    setShowStageMenu(null);
+  };
+
+  // Handle loss recording
+  const handleLostSubmit = async (reason: string) => {
+    if (!lostModal) return;
+    try {
+      await fetch("/api/contracts/outcome", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contractId: lostModal.id,
+          outcome: "lost",
+          notes: reason,
+        }),
+      });
+    } catch {
+      // Feedback recording failed — still move stage
+    }
+
+    setPipelineTenders((prev) =>
+      prev.map((t) => (t.id === lostModal.id ? { ...t, pipelineStage: "lost" as StageKey } : t))
+    );
+    setLostModal(null);
+    setShowStageMenu(null);
+  };
 
   if (!mounted || isLoading) {
     return (
@@ -116,7 +376,7 @@ export default function PipelinePage() {
       >
         {/* Header */}
         <div className="border-b border-border bg-white px-8 py-6">
-          <h1 className="text-xl font-semibold text-foreground">My Pipeline</h1>
+          <h1 className="text-xl font-semibold text-foreground">Pipeline</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Track opportunities from discovery to contract win
           </p>
@@ -124,7 +384,7 @@ export default function PipelinePage() {
           {/* Pipeline Summary */}
           <div className="flex gap-4 mt-4">
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">Total:</span>
+              <span className="text-xs text-muted-foreground">Total pipeline:</span>
               <span className="text-sm font-semibold">{formatCurrency(totalPipelineValue)}</span>
             </div>
             <div className="flex items-center gap-2">
@@ -135,13 +395,21 @@ export default function PipelinePage() {
               <span className="text-xs text-muted-foreground">Active bids:</span>
               <span className="text-sm font-semibold">{stagedTenders.bidding.length + stagedTenders.submitted.length}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">Win rate:</span>
+              <span className="text-sm font-semibold">
+                {stagedTenders.won.length + stagedTenders.lost.length > 0
+                  ? Math.round((stagedTenders.won.length / (stagedTenders.won.length + stagedTenders.lost.length)) * 100)
+                  : 0}%
+              </span>
+            </div>
           </div>
         </div>
 
         {/* Stages */}
         <div className="p-6 space-y-6">
           {STAGES.map((stage) => {
-            const stageTenders = stagedTenders[stage.key] || [];
+            const stageTenders = stagedTenders[stage.key as StageKey] || [];
             const Icon = stage.icon;
 
             return (
@@ -212,7 +480,43 @@ export default function PipelinePage() {
 
                           {/* Quick actions */}
                           <div className="flex items-center gap-2 mt-3 pt-2 border-t border-border/60">
-                            {stage.key === "reviewing" && (
+                            {/* Stage change dropdown */}
+                            <div className="relative">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 text-[11px] px-2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setShowStageMenu(showStageMenu === tender.id ? null : tender.id);
+                                }}
+                              >
+                                Move
+                                <ChevronDown className="ml-1 h-3 w-3" />
+                              </Button>
+                              {showStageMenu === tender.id && (
+                                <div
+                                  className="absolute left-0 top-7 z-50 w-40 rounded-lg border border-border bg-white shadow-lg py-1"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {STAGES.filter((s) => s.key !== tender.pipelineStage).map((s) => {
+                                    const SIcon = s.icon;
+                                    return (
+                                      <button
+                                        key={s.key}
+                                        className="flex items-center gap-2 w-full px-3 py-1.5 text-xs hover:bg-accent transition-colors"
+                                        onClick={() => moveToStage(tender.id, s.key as StageKey)}
+                                      >
+                                        <SIcon className="h-3 w-3" />
+                                        {s.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            {stage.key === "identified" && (
                               <Button size="sm" className="h-6 text-[11px] px-2.5" asChild>
                                 <Link href={`/bid-generator?tender=${tender.id}&title=${encodeURIComponent(tender.title)}&dept=${encodeURIComponent(tender.department)}&desc=${encodeURIComponent((tender.description || "").slice(0, 500))}&value=${tender.estimatedValue}`}>
                                   <FileEdit className="mr-1 h-3 w-3" />
@@ -272,6 +576,24 @@ export default function PipelinePage() {
             <p className="text-sm">Click any opportunity to see details</p>
           </div>
         </div>
+      )}
+
+      {/* Won Contract Modal */}
+      {wonModal && (
+        <WonContractModal
+          tender={wonModal}
+          onClose={() => setWonModal(null)}
+          onSubmit={handleWonSubmit}
+        />
+      )}
+
+      {/* Lost Reason Modal */}
+      {lostModal && (
+        <LostReasonModal
+          tender={lostModal}
+          onClose={() => setLostModal(null)}
+          onSubmit={handleLostSubmit}
+        />
       )}
     </div>
   );

@@ -17,7 +17,9 @@ import {
   Eye,
   ChevronDown,
   ChevronUp,
+  BarChart3,
 } from "lucide-react";
+import { BidStrengthPanel, BidStrengthAnalysis } from "@/components/bid-queue/bid-strength-panel";
 
 /* ---------- Types ---------- */
 
@@ -77,6 +79,11 @@ export default function BidQueuePage() {
 
   // Preview expansion
   const [previewId, setPreviewId] = useState<string | null>(null);
+
+  // Bid strength analysis
+  const [selectedAnalysis, setSelectedAnalysis] = useState<BidStrengthAnalysis | null>(null);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [analysisLoading, setAnalysisLoading] = useState(false);
 
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -219,6 +226,28 @@ export default function BidQueuePage() {
     }
   };
 
+  /* Analyze bid strength */
+  const analyzeBid = async (bidId: string) => {
+    setAnalysisLoading(true);
+    setShowAnalysis(true);
+    setSelectedAnalysis(null);
+    try {
+      const res = await fetch("/api/bid-queue/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bidId }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        setSelectedAnalysis(result);
+      }
+    } catch (err) {
+      console.error("Bid analysis failed", err);
+    } finally {
+      setAnalysisLoading(false);
+    }
+  };
+
   /* Render helpers */
   const isItemLoading = (id: string) => !!actionLoading[id];
 
@@ -271,6 +300,15 @@ export default function BidQueuePage() {
             >
               {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               <span className="ml-1.5">Approve</span>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => analyzeBid(item.id)}
+              disabled={busy || analysisLoading}
+            >
+              <BarChart3 className="h-3.5 w-3.5" />
+              <span className="ml-1">Analyze</span>
             </Button>
             {previewBtn}
             <Button
@@ -610,6 +648,18 @@ export default function BidQueuePage() {
             Cancel
           </Button>
         </div>
+      )}
+
+      {/* Bid Strength Analysis Panel */}
+      {showAnalysis && (
+        <BidStrengthPanel
+          analysis={selectedAnalysis}
+          loading={analysisLoading}
+          onClose={() => {
+            setShowAnalysis(false);
+            setSelectedAnalysis(null);
+          }}
+        />
       )}
     </div>
   );

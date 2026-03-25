@@ -11,7 +11,7 @@ import { AICategory } from "@/types/tender";
 export const maxDuration = 120;
 
 export async function GET() {
-  const jobs = listJobs();
+  const jobs = await listJobs();
   return NextResponse.json({ data: jobs, total: jobs.length });
 }
 
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Create job record
-    const job = createJob({
+    const job = await createJob({
       tenderId,
       tenderTitle,
       department: department || "",
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     });
 
     // Mark as running
-    updateJob(job.id, { status: "running", agentLog: ["Agent started..."] });
+    await updateJob(job.id, { status: "running", agentLog: ["Agent started..."] });
 
     // Run the fulfillment agent
     const input: FulfillmentInput = {
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
     const result = await runFulfillmentAgent(input);
 
     // Save output
-    const completed = updateJob(job.id, {
+    const completed = await updateJob(job.id, {
       status: "review",
       output: result.deliverable,
       estimatedAICost: result.estimatedAICost,
@@ -111,12 +111,12 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Missing job id" }, { status: 400 });
     }
 
-    const existing = getJob(id);
+    const existing = await getJob(id);
     if (!existing) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
     }
 
-    const updated = updateJob(id, patch);
+    const updated = await updateJob(id, patch);
     return NextResponse.json({ job: updated });
   } catch (err) {
     return NextResponse.json(

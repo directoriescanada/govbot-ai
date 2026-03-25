@@ -8,12 +8,12 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
 
     if (searchParams.get("stats") === "true") {
-      const stats = getBidQueueStats();
+      const stats = await getBidQueueStats();
       return NextResponse.json(stats);
     }
 
     const status = (searchParams.get("status") || undefined) as import("@/lib/auto-bid").BidQueueStatus | undefined;
-    const items = listBidQueue(status ? { status } : undefined);
+    const items = await listBidQueue(status ? { status } : undefined);
 
     return NextResponse.json(items);
   } catch (error) {
@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const alreadyQueued = isTenderQueued(tender.id);
+    const alreadyQueued = await isTenderQueued(tender.id);
     if (alreadyQueued) {
       return NextResponse.json(
         { error: "Tender is already queued for auto-bid" },
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = queueForAutoBid(tender);
+    const result = await queueForAutoBid(tender);
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
@@ -68,12 +68,12 @@ export async function PATCH(request: NextRequest) {
     }
 
     if (body.bidDraft) {
-      const result = attachBidDraft(body.id, body.bidDraft);
+      const result = await attachBidDraft(body.id, body.bidDraft);
       return NextResponse.json(result);
     }
 
     if (body.status) {
-      const result = updateBidStatus(body.id, body.status);
+      const result = await updateBidStatus(body.id, body.status);
       return NextResponse.json(result);
     }
 

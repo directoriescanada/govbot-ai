@@ -5,7 +5,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const section = searchParams.get("section");
 
-  const config = getConfig();
+  const config = await getConfig();
   if (section && section in config) {
     return NextResponse.json({ [section]: config[section as keyof GovBotConfig] });
   }
@@ -22,19 +22,19 @@ export async function PATCH(req: NextRequest) {
     };
 
     if (reset === true) {
-      return NextResponse.json(resetConfig());
+      return NextResponse.json(await resetConfig());
     }
     if (typeof reset === "string") {
-      return NextResponse.json(resetConfigSection(reset));
+      return NextResponse.json(await resetConfigSection(reset));
     }
 
     if (section && data) {
-      const updated = updateConfigSection(section, data as never);
+      const updated = await updateConfigSection(section, data as never);
       return NextResponse.json(updated);
     }
 
     if (data) {
-      const updated = updateConfig(data);
+      const updated = await updateConfig(data);
       return NextResponse.json(updated);
     }
 

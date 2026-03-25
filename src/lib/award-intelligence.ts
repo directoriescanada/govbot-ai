@@ -382,6 +382,96 @@ export function recommendPrice(params: {
   };
 }
 
+// ─── Competitor Intelligence ─────────────────────────────────────────────────
+
+/**
+ * Analyze the competitive landscape for a given department/category/value.
+ * Returns top winners, average contract value, typical bidder count, and
+ * department-level insights.
+ */
+export function getCompetitorIntel(params: {
+  department: string;
+  category: string;
+  estimatedValue: number;
+}): {
+  topWinners: Array<{ vendor: string; winCount: number; avgValue: number }>;
+  avgContractValue: number;
+  typicalBidderCount: number;
+  departmentInsights: { totalAwards: number; uniqueVendors: number; avgValue: number; trend: string };
+} {
+  const { department, category, estimatedValue } = params;
+  const allAwards = listAwards();
+
+  // Filter by department (exact match, case-insensitive)
+  const deptLower = department.toLowerCase();
+  const deptMatches = allAwards.filter(
+    (a) => a.department.toLowerCase() === deptLower
+  );
+
+  // Also try category keyword matching for broader context
+  const categoryDerived = deriveCategory(category || "");
+  const catMatches = allAwards.filter(
+    (a) => deriveCategory(a.title) === categoryDerived && categoryDerived !== "Other"
+  );
+
+  // Use dept matches if available, otherwise category matches, otherwise all
+  const pool = deptMatches.length > 0 ? deptMatches : catMatches.length > 0 ? catMatches : allAwards;
+
+  // Top winners by win count in the pool
+  const vendorMap = new Map<string, { count: number; totalValue: number }>();
+  for (const award of pool) {
+    const entry = vendorMap.get(award.vendorName) || { count: 0, totalValue: 0 };
+    entry.count++;
+    entry.totalValue += award.contractValue;
+    vendorMap.set(award.vendorName, entry);
+  }
+
+  const topWinners = Array.from(vendorMap.entries())
+    .map(([vendor, stats]) => ({
+      vendor,
+      winCount: stats.count,
+      avgValue: Math.round(stats.totalValue / stats.count),
+    }))
+    .sort((a, b) => b.winCount - a.winCount)
+    .slice(0, 5);
+
+  // Average contract value in the pool
+  const totalPoolValue = pool.reduce((sum, a) => sum + a.contractValue, 0);
+  const avgContractValue = pool.length > 0 ? Math.round(totalPoolValue / pool.length) : 0;
+
+  // Typical bidder count estimate based on unique vendors in the department
+  const deptVendors = new Set(deptMatches.map((a) => a.vendorName));
+  const typicalBidderCount = Math.max(2, Math.min(deptVendors.size + 2, 15));
+
+  // Department insights
+  const deptTotalValue = deptMatches.reduce((sum, a) => sum + a.contractValue, 0);
+  const deptAvgValue = deptMatches.length > 0 ? Math.round(deptTotalValue / deptMatches.length) : 0;
+
+  // Simple trend detection: compare first half vs second half of awards
+  let trend = "stable";
+  if (deptMatches.length >= 4) {
+    const sorted = [...deptMatches].sort((a, b) => a.awardDate.localeCompare(b.awardDate));
+    const mid = Math.floor(sorted.length / 2);
+    const firstHalfValue = sorted.slice(0, mid).reduce((sum, a) => sum + a.contractValue, 0);
+    const secondHalfValue = sorted.slice(mid).reduce((sum, a) => sum + a.contractValue, 0);
+    const ratio = secondHalfValue / (firstHalfValue || 1);
+    if (ratio > 1.15) trend = "growing";
+    else if (ratio < 0.85) trend = "declining";
+  }
+
+  return {
+    topWinners,
+    avgContractValue,
+    typicalBidderCount,
+    departmentInsights: {
+      totalAwards: deptMatches.length,
+      uniqueVendors: deptVendors.size,
+      avgValue: deptAvgValue,
+      trend,
+    },
+  };
+}
+
 // ─── Dashboard Summary ───────────────────────────────────────────────────────
 
 /**

@@ -20,10 +20,10 @@ export async function GET(req: NextRequest) {
   const summary = searchParams.get("summary") === "true";
 
   if (summary) {
-    return NextResponse.json(getOpsSummary());
+    return NextResponse.json(await getOpsSummary());
   }
 
-  const contracts = listContracts();
+  const contracts = await listContracts();
   return NextResponse.json({ data: contracts, total: contracts.length });
 }
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const contract = createContract({
+    const contract = await createContract({
       ...body,
       status: body.status || "active",
       marginPercent: body.marginPercent || 0,
@@ -64,7 +64,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Missing contract id" }, { status: 400 });
     }
 
-    const updated = updateContract(id, patch);
+    const updated = await updateContract(id, patch);
     if (!updated) {
       return NextResponse.json({ error: "Contract not found" }, { status: 404 });
     }
@@ -86,7 +86,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Missing contract id" }, { status: 400 });
   }
 
-  const deleted = deleteContract(id);
+  const deleted = await deleteContract(id);
   if (!deleted) {
     return NextResponse.json({ error: "Contract not found" }, { status: 404 });
   }

@@ -63,10 +63,22 @@ export interface DeliverableDocxInput {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const docsCfg = getConfigSection("documents");
-const FONT = docsCfg.font;
-const BODY_SIZE = docsCfg.bodySize * 2; // half-points
-const HEADING_SIZE = docsCfg.headingSize * 2; // half-points
+// Defaults for module-level constants; overridden per-call when Supabase is active
+const DEFAULT_FONT = "Calibri";
+const DEFAULT_BODY_SIZE = 11 * 2; // half-points
+const DEFAULT_HEADING_SIZE = 14 * 2; // half-points
+
+let FONT = DEFAULT_FONT;
+let BODY_SIZE = DEFAULT_BODY_SIZE;
+let HEADING_SIZE = DEFAULT_HEADING_SIZE;
+
+/** Refresh module-level formatting constants from config (async-safe). */
+async function refreshDocsCfg() {
+  const docsCfg = await getConfigSection("documents");
+  FONT = docsCfg.font || DEFAULT_FONT;
+  BODY_SIZE = (docsCfg.bodySize || 11) * 2;
+  HEADING_SIZE = (docsCfg.headingSize || 14) * 2;
+}
 
 const COLORS = {
   met: "22C55E",
@@ -108,10 +120,12 @@ function textRun(
   });
 }
 
-function headerParagraph(): Paragraph {
+async function headerParagraph(): Promise<Paragraph> {
+  const docsCfg = await getConfigSection("documents");
+  const companyCfg = await getConfigSection("company");
   return new Paragraph({
     children: [
-      textRun(getConfigSection("documents").headerText || getConfigSection("company").companyName, {
+      textRun(docsCfg.headerText || companyCfg.companyName, {
         bold: true,
         size: 18,
         color: "666666",
@@ -121,8 +135,9 @@ function headerParagraph(): Paragraph {
   });
 }
 
-function footerParagraph(): Paragraph {
-  const footerText = getConfigSection("documents").footerText;
+async function footerParagraph(): Promise<Paragraph> {
+  const docsCfg = await getConfigSection("documents");
+  const footerText = docsCfg.footerText;
   return new Paragraph({
     alignment: AlignmentType.CENTER,
     children: [
@@ -144,12 +159,12 @@ function footerParagraph(): Paragraph {
   });
 }
 
-function defaultHeader(): Header {
-  return new Header({ children: [headerParagraph()] });
+async function defaultHeader(): Promise<Header> {
+  return new Header({ children: [await headerParagraph()] });
 }
 
-function defaultFooter(): Footer {
-  return new Footer({ children: [footerParagraph()] });
+async function defaultFooter(): Promise<Footer> {
+  return new Footer({ children: [await footerParagraph()] });
 }
 
 /** Create a table cell with shading */
@@ -376,7 +391,7 @@ function markdownToDocxChildren(
 // Cover page builders
 // ---------------------------------------------------------------------------
 
-function buildBidCoverPage(data: BidDocxInput): Paragraph[] {
+async function buildBidCoverPage(data: BidDocxInput): Promise<Paragraph[]> {
   return [
     new Paragraph({ spacing: { before: 2400 }, children: [] }),
     new Paragraph({
@@ -395,7 +410,7 @@ function buildBidCoverPage(data: BidDocxInput): Paragraph[] {
       alignment: AlignmentType.CENTER,
       spacing: { after: 200 },
       children: [
-        textRun(getConfigSection("company").companyName, { bold: true, size: 48 }),
+        textRun((await getConfigSection("company")).companyName, { bold: true, size: 48 }),
       ],
     }),
     new Paragraph({ spacing: { after: 200 }, children: [] }),
@@ -708,10 +723,11 @@ function buildPricingTable(
 // ---------------------------------------------------------------------------
 
 export async function generateBidDocx(data: BidDocxInput): Promise<Buffer> {
+  await refreshDocsCfg();
   const children: (Paragraph | Table | TableOfContents)[] = [];
 
   // Cover page
-  children.push(...buildBidCoverPage(data));
+  children.push(...(await buildBidCoverPage(data)));
 
   // Page break before TOC
   children.push(
@@ -803,7 +819,7 @@ export async function generateBidDocx(data: BidDocxInput): Promise<Buffer> {
       spacing: { after: 120, line: 276 },
       children: [
         textRun(
-          data.aboutUs || getConfigSection("company").aboutUs,
+          data.aboutUs || (await getConfigSection("company")).aboutUs,
         ),
       ],
     }),
@@ -874,8 +890,8 @@ export async function generateBidDocx(data: BidDocxInput): Promise<Buffer> {
             },
           },
         },
-        headers: { default: defaultHeader() },
-        footers: { default: defaultFooter() },
+        headers: { default: await defaultHeader() },
+        footers: { default: await defaultFooter() },
         children: children as (Paragraph | Table)[],
       },
     ],
@@ -887,6 +903,7 @@ export async function generateBidDocx(data: BidDocxInput): Promise<Buffer> {
 export async function generateDeliverableDocx(
   data: DeliverableDocxInput,
 ): Promise<Buffer> {
+  await refreshDocsCfg();
   const children: (Paragraph | Table)[] = [];
 
   // Cover page
@@ -967,8 +984,8 @@ export async function generateDeliverableDocx(
             },
           },
         },
-        headers: { default: defaultHeader() },
-        footers: { default: defaultFooter() },
+        headers: { default: await defaultHeader() },
+        footers: { default: await defaultFooter() },
         children,
       },
     ],

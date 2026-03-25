@@ -27,9 +27,10 @@ export async function classifyTender(
   estimatedValue: number,
   category: string
 ): Promise<ClassificationResult> {
+  const fulfillmentCfg = await getConfigSection("fulfillment");
   const response = await anthropic.messages.create({
-    model: getConfigSection("fulfillment").claudeModel,
-    max_tokens: getConfigSection("fulfillment").maxTokens,
+    model: fulfillmentCfg.claudeModel,
+    max_tokens: fulfillmentCfg.maxTokens,
     messages: [
       {
         role: "user",
@@ -129,9 +130,10 @@ export async function generateBidResponse(
   const bidPrice = recommendation.recommendedBidPrice;
   const bidPercent = recommendation.bidAsPercentOfEstimate;
 
+  const fulfillmentCfg2 = await getConfigSection("fulfillment");
   const response = await anthropic.messages.create({
-    model: getConfigSection("fulfillment").claudeModel,
-    max_tokens: getConfigSection("fulfillment").maxTokens,
+    model: fulfillmentCfg2.claudeModel,
+    max_tokens: fulfillmentCfg2.maxTokens,
     messages: [
       {
         role: "user",
@@ -517,11 +519,11 @@ export async function runFulfillmentAgent(input: FulfillmentInput): Promise<Fulf
     throw new Error(`No fulfillment agent defined for category: ${input.category}`);
   }
 
-  const companyCfg = getConfigSection("company");
+  const companyCfg = await getConfigSection("company");
   const companyPrefix = `You are working for ${companyCfg.companyName}. Company capabilities: ${companyCfg.capabilities.join(", ")}.\n\n`;
   const prompt = companyPrefix + rawPrompt;
 
-  const fulfillmentCfg = getConfigSection("fulfillment");
+  const fulfillmentCfg = await getConfigSection("fulfillment");
 
   // Pass 1: Initial draft
   const response = await anthropic.messages.create({
@@ -666,6 +668,132 @@ function generateReviewNotes(category: AICategory, output: string): string[] {
   ])];
 }
 
+// ─── Bid Strength Analyzer ──────────────────────────────────────────────────
+
+export interface BidStrengthAnalysis {
+  overallScore: number;
+  breakdown: {
+    compliance: number;
+    pricing: number;
+    technicalDepth: number;
+    differentiators: number;
+    riskFactors: number;
+  };
+  weaknesses: Array<{
+    area: string;
+    issue: string;
+    severity: "critical" | "warning" | "info";
+    recommendation: string;
+  }>;
+  strengths: string[];
+  improvementPlan: string[];
+}
+
+export async function analyzeBidStrength(params: {
+  tenderTitle: string;
+  department: string;
+  estimatedValue: number;
+  bidDraft: { complianceMatrix?: any[]; proposalSections?: any[]; pricingModel?: any };
+  awardIntel?: { recommendedPrice?: number; confidence?: string };
+}): Promise<BidStrengthAnalysis> {
+  const { tenderTitle, department, estimatedValue, bidDraft, awardIntel } = params;
+
+  const bidFulfillmentCfg = await getConfigSection("fulfillment");
+  const response = await anthropic.messages.create({
+    model: bidFulfillmentCfg.claudeModel,
+    max_tokens: bidFulfillmentCfg.maxTokens,
+    messages: [
+      {
+        role: "user",
+        content: `You are an expert evaluator of Canadian government RFP bid proposals. Analyze the following bid draft against standard government procurement evaluation criteria and produce a detailed strength assessment.
+
+TENDER:
+Title: ${tenderTitle}
+Department: ${department}
+Estimated Value: $${estimatedValue.toLocaleString()} CAD
+
+BID DRAFT:
+Compliance Matrix: ${JSON.stringify(bidDraft.complianceMatrix || [], null, 2)}
+Proposal Sections: ${JSON.stringify(bidDraft.proposalSections || [], null, 2)}
+Pricing Model: ${JSON.stringify(bidDraft.pricingModel || {}, null, 2)}
+
+AWARD INTELLIGENCE:
+Recommended Price: ${awardIntel?.recommendedPrice ? `$${awardIntel.recommendedPrice.toLocaleString()}` : "N/A"}
+Confidence: ${awardIntel?.confidence || "N/A"}
+
+Respond with ONLY valid JSON (no markdown, no code fences):
+{
+  "overallScore": 78,
+  "breakdown": {
+    "compliance": 85,
+    "pricing": 72,
+    "technicalDepth": 80,
+    "differentiators": 65,
+    "riskFactors": 78
+  },
+  "weaknesses": [
+    {
+      "area": "Pricing",
+      "issue": "Bid price is above the recommended competitive range",
+      "severity": "warning",
+      "recommendation": "Consider reducing bid price by 5-8% to align with historical award data"
+    }
+  ],
+  "strengths": [
+    "Strong compliance matrix coverage",
+    "Clear AI-powered delivery methodology"
+  ],
+  "improvementPlan": [
+    "Add case studies from similar government contracts",
+    "Strengthen risk mitigation section"
+  ]
+}
+
+EVALUATION CRITERIA:
+- compliance (0-100): How well the bid addresses all mandatory and rated requirements
+- pricing (0-100): Competitiveness and realism of pricing relative to estimate and intel
+- technicalDepth (0-100): Depth of technical approach, methodology, and delivery plan
+- differentiators (0-100): Unique value propositions, innovation, AI advantage
+- riskFactors (0-100): How well risks are identified and mitigated (higher = less risky)
+
+RULES:
+- Be specific and actionable in weaknesses and recommendations
+- severity must be "critical", "warning", or "info"
+- overallScore should be a weighted average (compliance 30%, pricing 25%, technicalDepth 20%, differentiators 15%, riskFactors 10%)
+- Include at least 2 weaknesses and 2 strengths
+- Include at least 3 improvement plan items`,
+      },
+    ],
+  });
+
+  const text = response.content[0].type === "text" ? response.content[0].text : "";
+
+  try {
+    const parsed = JSON.parse(text);
+    return {
+      overallScore: Math.min(Math.max(parsed.overallScore || 0, 0), 100),
+      breakdown: {
+        compliance: Math.min(Math.max(parsed.breakdown?.compliance || 0, 0), 100),
+        pricing: Math.min(Math.max(parsed.breakdown?.pricing || 0, 0), 100),
+        technicalDepth: Math.min(Math.max(parsed.breakdown?.technicalDepth || 0, 0), 100),
+        differentiators: Math.min(Math.max(parsed.breakdown?.differentiators || 0, 0), 100),
+        riskFactors: Math.min(Math.max(parsed.breakdown?.riskFactors || 0, 0), 100),
+      },
+      weaknesses: parsed.weaknesses || [],
+      strengths: parsed.strengths || [],
+      improvementPlan: parsed.improvementPlan || [],
+    };
+  } catch {
+    return {
+      overallScore: 0,
+      breakdown: { compliance: 0, pricing: 0, technicalDepth: 0, differentiators: 0, riskFactors: 0 },
+      weaknesses: [{ area: "Analysis", issue: "Bid strength analysis failed — manual review required", severity: "critical", recommendation: "Retry the analysis or review the bid manually" }],
+      strengths: [],
+      improvementPlan: ["Retry bid strength analysis"],
+    };
+  }
+}
+
 // ─── Submission Package Generator ────────────────────────────────────────────
 
 export async function generateSubmissionPackage(tender: Tender): Promise<SubmissionPackage> {
@@ -675,8 +803,8 @@ export async function generateSubmissionPackage(tender: Tender): Promise<Submiss
     estimatedValue: tender.estimatedValue,
   });
   const bidPercent = recommendation.bidAsPercentOfEstimate;
-  const companyCfg = getConfigSection("company");
-  const fulfillmentCfg = getConfigSection("fulfillment");
+  const companyCfg = await getConfigSection("company");
+  const fulfillmentCfg = await getConfigSection("fulfillment");
 
   const response = await anthropic.messages.create({
     model: fulfillmentCfg.claudeModel,

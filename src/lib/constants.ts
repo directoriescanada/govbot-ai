@@ -2,7 +2,7 @@
 // GovBot AI — Constants & Configuration
 // ═══════════════════════════════════════════════════════════════════
 
-import { AICategory, OpportunitySource } from "@/types/tender";
+import { AICategory, OpportunitySource, ContractStatus } from "@/types/tender";
 
 export const AI_CATEGORIES: Record<
   AICategory,
@@ -160,4 +160,37 @@ export const CATEGORY_COLORS: Record<string, string> = {
   POLICY: "bg-orange-50 text-orange-700 border-orange-200",
   AUDIT: "bg-rose-50 text-rose-700 border-rose-200",
   TESTING: "bg-cyan-50 text-cyan-700 border-cyan-200",
+};
+
+export const CATEGORY_LABELS: Record<AICategory, string> = {
+  TRANSLATION: "Translation",
+  WRITING: "Research & Writing",
+  DATA_ANALYSIS: "Data Analysis",
+  TRANSCRIPTION: "Transcription",
+  DOCUMENT_REVIEW: "Document Review",
+  COMMS: "Communications",
+  TRAINING: "Training Materials",
+  SURVEY: "Survey & Analysis",
+  IT_CONSULTING: "IT Advisory",
+  POLICY: "Policy Research",
+  AUDIT: "Compliance Audit",
+  TESTING: "Software Testing",
+};
+
+export const STATUS_LABELS: Record<ContractStatus, string> = {
+  active: "Active",
+  in_fulfillment: "In Fulfillment",
+  delivered: "Delivered",
+  invoiced: "Invoiced",
+  paid: "Paid",
+  closed: "Closed",
+};
+
+export const STATUS_COLORS: Record<ContractStatus, string> = {
+  active: "bg-blue-50 text-blue-700 border-blue-200",
+  in_fulfillment: "bg-violet-50 text-violet-700 border-violet-200",
+  delivered: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  invoiced: "bg-amber-50 text-amber-700 border-amber-200",
+  paid: "bg-green-50 text-green-700 border-green-200",
+  closed: "bg-gray-50 text-gray-500 border-gray-200",
 };

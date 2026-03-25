@@ -5,6 +5,12 @@
 // ═══════════════════════════════════════════════════════════════════
 
 import { AICategory } from "@/types/tender";
+import { useSupabase } from "@/lib/db";
+// Dynamic import to avoid bundling server-only code into client components
+async function getServiceClient() {
+  const { createServiceClient } = await import("@/lib/supabase/server");
+  return createServiceClient();
+}
 
 // ─── Company Profile ─────────────────────────────────────────────────────────
 
@@ -356,45 +362,120 @@ const DEFAULT_CONFIG: GovBotConfig = {
   },
 };
 
-// ─── Runtime store ───────────────────────────────────────────────────────────
+// ─── Runtime store (demo-mode fallback) ─────────────────────────────────────
+
+import { _registerConfig } from "./config-sync";
 
 let _config: GovBotConfig = structuredClone(DEFAULT_CONFIG);
+_registerConfig(_config);
 
-export function getConfig(): GovBotConfig {
+const CONFIG_USER_ID = "default";
+
+/** Load full config from Supabase user_config table. */
+async function loadFromSupabase(): Promise<GovBotConfig> {
+  const sb = await getServiceClient();
+  const { data, error } = await sb
+    .from("user_config")
+    .select("config")
+    .eq("user_id", CONFIG_USER_ID)
+    .single();
+  if (error || !data) {
+    return structuredClone(DEFAULT_CONFIG);
+  }
+  return deepMerge(structuredClone(DEFAULT_CONFIG), data.config) as GovBotConfig;
+}
+
+/** Persist full config to Supabase user_config table (upsert). */
+async function saveToSupabase(config: GovBotConfig): Promise<void> {
+  const sb = await getServiceClient();
+  await sb
+    .from("user_config")
+    .upsert({
+      user_id: CONFIG_USER_ID,
+      config: config as unknown as Record<string, unknown>,
+      updated_at: new Date().toISOString(),
+    });
+}
+
+export async function getConfig(): Promise<GovBotConfig> {
+  if (!useSupabase()) return _config;
+  return loadFromSupabase();
+}
+
+export async function getConfigSection<K extends keyof GovBotConfig>(key: K): Promise<GovBotConfig[K]> {
+  if (!useSupabase()) return _config[key];
+  const config = await loadFromSupabase();
+  return config[key];
+}
+
+/**
+ * Synchronous accessors — safe for client components and scoring utilities.
+ * Always reads from in-memory store (never hits Supabase).
+ */
+export function getConfigSync(): GovBotConfig {
   return _config;
 }
 
-export function getConfigSection<K extends keyof GovBotConfig>(key: K): GovBotConfig[K] {
+export function getConfigSectionSync<K extends keyof GovBotConfig>(key: K): GovBotConfig[K] {
   return _config[key];
 }
 
-export function updateConfig(patch: Partial<GovBotConfig>): GovBotConfig {
-  _config = deepMerge(_config, patch) as GovBotConfig;
-  return _config;
+export async function updateConfig(patch: Partial<GovBotConfig>): Promise<GovBotConfig> {
+  if (!useSupabase()) {
+    _config = deepMerge(_config, patch) as GovBotConfig;
+    return _config;
+  }
+  const current = await loadFromSupabase();
+  const updated = deepMerge(current, patch) as GovBotConfig;
+  await saveToSupabase(updated);
+  return updated;
 }
 
-export function updateConfigSection<K extends keyof GovBotConfig>(
+export async function updateConfigSection<K extends keyof GovBotConfig>(
   key: K,
   patch: Partial<GovBotConfig[K]>
-): GovBotConfig {
-  _config = {
-    ..._config,
-    [key]: deepMerge(_config[key], patch),
+): Promise<GovBotConfig> {
+  if (!useSupabase()) {
+    _config = {
+      ..._config,
+      [key]: deepMerge(_config[key], patch),
+    };
+    return _config;
+  }
+  const current = await loadFromSupabase();
+  const updated = {
+    ...current,
+    [key]: deepMerge(current[key], patch),
   };
-  return _config;
+  await saveToSupabase(updated as GovBotConfig);
+  return updated as GovBotConfig;
 }
 
-export function resetConfig(): GovBotConfig {
-  _config = structuredClone(DEFAULT_CONFIG);
-  return _config;
+export async function resetConfig(): Promise<GovBotConfig> {
+  const fresh = structuredClone(DEFAULT_CONFIG);
+  if (!useSupabase()) {
+    _config = fresh;
+    return _config;
+  }
+  await saveToSupabase(fresh);
+  return fresh;
 }
 
-export function resetConfigSection<K extends keyof GovBotConfig>(key: K): GovBotConfig {
-  _config = {
-    ..._config,
+export async function resetConfigSection<K extends keyof GovBotConfig>(key: K): Promise<GovBotConfig> {
+  if (!useSupabase()) {
+    _config = {
+      ..._config,
+      [key]: structuredClone(DEFAULT_CONFIG[key]),
+    };
+    return _config;
+  }
+  const current = await loadFromSupabase();
+  const updated = {
+    ...current,
     [key]: structuredClone(DEFAULT_CONFIG[key]),
   };
-  return _config;
+  await saveToSupabase(updated as GovBotConfig);
+  return updated as GovBotConfig;
 }
 
 // ─── Deep merge utility ──────────────────────────────────────────────────────
