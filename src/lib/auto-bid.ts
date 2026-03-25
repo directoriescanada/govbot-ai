@@ -75,7 +75,6 @@ function generateId(): string {
 }
 
 const DEFAULT_BID_RATIO = 0.82;
-const ESTIMATED_AI_COST_RATIO = 0.15;
 
 /** Map a Supabase row (snake_case) to a BidQueueItem (camelCase). */
 function rowToItem(row: Record<string, unknown>): BidQueueItem {
@@ -125,10 +124,13 @@ export async function queueForAutoBid(tender: Tender): Promise<BidQueueItem | nu
     : biddingCfg.defaultBidPercent / 100;
   const bidPrice = Math.round(estimatedValue * bidRatio * 100) / 100;
 
-  const estimatedAICost = bidPrice * ESTIMATED_AI_COST_RATIO;
+  // Use cost breakdown from config to estimate delivery cost and margin
+  const costBreakdown = biddingCfg.costBreakdown;
+  const deliveryCostRatio = costBreakdown.aiCosts + costBreakdown.humanCosts + costBreakdown.infrastructure + costBreakdown.overhead + costBreakdown.qa;
+  const estimatedDeliveryCost = bidPrice * Math.min(deliveryCostRatio, 1);
   const marginPercent =
     bidPrice > 0
-      ? Math.round(((bidPrice - estimatedAICost) / bidPrice) * 10000) / 100
+      ? Math.round(((bidPrice - estimatedDeliveryCost) / bidPrice) * 10000) / 100
       : 0;
 
   const item: BidQueueItem = {

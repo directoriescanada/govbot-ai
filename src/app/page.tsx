@@ -38,9 +38,10 @@ import {
   ChevronUp,
 } from "lucide-react";
 
-const MIN_AI_SCORE = 80;  // Raw AI suitability score (0-100) — the primary filter
-const MIN_VALUE = 5_000;
-const MAX_VALUE = 2_000_000;
+// Defaults — overridden by config fetched at mount
+const DEFAULT_MIN_AI_SCORE = 80;
+const DEFAULT_MIN_VALUE = 5_000;
+const DEFAULT_MAX_VALUE = 2_000_000;
 
 export default function OpportunityInboxPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -53,6 +54,29 @@ export default function OpportunityInboxPage() {
   const [error, setError] = useState<string | null>(null);
   const [usingMock, setUsingMock] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Scanning config from settings
+  const [minAiScore, setMinAiScore] = useState(DEFAULT_MIN_AI_SCORE);
+  const [minValue, setMinValue] = useState(DEFAULT_MIN_VALUE);
+  const [maxValue, setMaxValue] = useState(DEFAULT_MAX_VALUE);
+
+  useEffect(() => {
+    async function loadScanningConfig() {
+      try {
+        const res = await fetch("/api/config?section=scanning");
+        if (res.ok) {
+          const json = await res.json();
+          const data = json.scanning ?? json;
+          if (data.minAiScore) setMinAiScore(data.minAiScore);
+          if (data.minContractValue) setMinValue(data.minContractValue);
+          if (data.maxContractValue) setMaxValue(data.maxContractValue);
+        }
+      } catch {
+        // Use defaults if config unavailable
+      }
+    }
+    loadScanningConfig();
+  }, []);
 
   // Smart notifications
   const [notifications, setNotifications] = useState<Array<{ text: string; color: string; href: string }>>([]);
@@ -67,7 +91,7 @@ export default function OpportunityInboxPage() {
     try {
       const params = new URLSearchParams({
         sort: sortBy,
-        minScore: String(MIN_AI_SCORE),
+        minScore: String(minAiScore),
         limit: "200",
       });
 
@@ -97,7 +121,7 @@ export default function OpportunityInboxPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [sortBy]);
+  }, [sortBy, minAiScore]);
 
   useEffect(() => {
     fetchTenders();
@@ -142,10 +166,10 @@ export default function OpportunityInboxPage() {
   const filtered = useMemo(() => {
     let result = tenders.filter((t) => {
       // Primary filter: AI suitability score (raw Claude score, not composite)
-      if ((t.aiScore ?? 0) < MIN_AI_SCORE) return false;
+      if ((t.aiScore ?? 0) < minAiScore) return false;
       // Value range
       const v = t.estimatedValue ?? 0;
-      if (v < MIN_VALUE || v > MAX_VALUE) return false;
+      if (v < minValue || v > maxValue) return false;
       // Only open
       if (t.status === "closed" || t.status === "awarded" || t.status === "cancelled") return false;
       return true;
@@ -185,7 +209,7 @@ export default function OpportunityInboxPage() {
     }
 
     return result;
-  }, [tenders, sortBy, filterCat, searchQuery, hideBlockers]);
+  }, [tenders, sortBy, filterCat, searchQuery, hideBlockers, minAiScore, minValue, maxValue]);
 
   // Add urgent closing notification based on filtered tenders
   useEffect(() => {
@@ -262,7 +286,7 @@ export default function OpportunityInboxPage() {
               Opportunity Inbox
             </h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              AI-fulfillable contracts · AI score 80+ · $5K–$2M · Open now
+              AI-fulfillable contracts · AI score {minAiScore}+ · {formatCurrency(minValue)}–{formatCurrency(maxValue)} · Open now
               {usingMock && " · Demo data"}
             </p>
           </div>

@@ -131,6 +131,8 @@ export async function generateBidResponse(
   const bidPercent = recommendation.bidAsPercentOfEstimate;
 
   const fulfillmentCfg2 = await getConfigSection("fulfillment");
+  const companyCfg = await getConfigSection("company");
+  const bidTemplateCfg = await getConfigSection("bidTemplates");
   const response = await anthropic.messages.create({
     model: fulfillmentCfg2.claudeModel,
     max_tokens: fulfillmentCfg2.maxTokens,
@@ -138,6 +140,13 @@ export async function generateBidResponse(
       {
         role: "user",
         content: `You are an expert government proposal writer specializing in Canadian federal procurement. Generate a comprehensive bid response for this tender.
+
+COMPANY CONTEXT:
+Company: ${companyCfg.companyName}
+About: ${companyCfg.aboutUs}
+Capabilities: ${companyCfg.capabilities.join(", ")}
+Differentiators: ${bidTemplateCfg.differentiators.join("; ")}
+Certifications: ${bidTemplateCfg.certifications.length > 0 ? bidTemplateCfg.certifications.join(", ") : "None listed"}
 
 TENDER:
 Title: ${title}

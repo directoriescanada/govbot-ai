@@ -3,10 +3,13 @@ import { CANADABUYS_ENDPOINTS } from "@/lib/constants";
 import { parseCanadaBuysCSV, parseAwardNoticesCSV } from "@/lib/csv-parser";
 import { parseMerxXML } from "@/lib/merx-parser";
 import { fetchSamGovOpportunities, formatSamDate } from "@/lib/samgov-client";
-import { classifyTender } from "@/lib/claude";
+import { classifyTender, generateBidResponse } from "@/lib/claude";
 import { computeOpportunityScore } from "@/lib/scoring";
 import { Tender } from "@/types/tender";
 import { createServiceClient } from "@/lib/supabase/server";
+import { sendBatchOpportunityAlerts } from "@/lib/email";
+import { getConfig, getConfigSection } from "@/lib/config";
+import { queueForAutoBid, attachBidDraft, isTenderQueued } from "@/lib/auto-bid";
 
 export const maxDuration = 300;
 
@@ -54,6 +57,8 @@ export async function GET(request: NextRequest) {
     samgov: { fetched: 0, new: 0, classified: 0, updated: 0 },
   };
   let totalClassified = 0;
+  let autoBidsQueued = 0;
+  let autoBidsDrafted = 0;
   const errors: string[] = [];
 
   // ─── 1. CanadaBuys ─────────────────────────────────────────
@@ -155,7 +160,144 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // ─── 4. Log the refresh ────────────────────────────────────
+  // ─── 4. Send email alerts for high-scoring tenders ──────────
+  let emailAlertsSent = 0;
+  try {
+    const config = await getConfig();
+    const alertThreshold = config.alerts.alertMinScore || 85;
+    const alertEmail = config.alerts.emailAddress || config.company.contactEmail || "";
+
+    if (config.alerts.emailEnabled && alertEmail) {
+      // Find tenders scored above threshold in this refresh cycle
+      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const { data: highScoreTenders } = await supabase
+        .from("tenders")
+        .select("id, title, department, estimated_value, closing_date, computed_score, ai_score")
+        .gte("updated_at", twoHoursAgo)
+        .gte("computed_score", alertThreshold)
+        .order("computed_score", { ascending: false })
+        .limit(20);
+
+      if (highScoreTenders && highScoreTenders.length > 0) {
+        const tenderPayloads = highScoreTenders.map((t) => ({
+          id: t.id as string,
+          title: t.title as string,
+          department: t.department as string,
+          estimatedValue: (t.estimated_value as number) || 0,
+          closingDate: (t.closing_date as string) || "",
+          computedScore: (t.computed_score as number) || 0,
+          aiScore: (t.ai_score as number) || 0,
+        }));
+
+        const sent = await sendBatchOpportunityAlerts({
+          to: alertEmail,
+          tenders: tenderPayloads,
+        });
+        if (sent) emailAlertsSent = highScoreTenders.length;
+      }
+    }
+  } catch (err) {
+    console.warn("Email alert sending failed:", err);
+    errors.push(`Email alerts: ${String(err)}`);
+  }
+
+  // ─── 5. Auto-bid draft generation for high-scoring tenders ──
+  const hasClaudeKey = !!process.env.ANTHROPIC_API_KEY;
+  if (hasClaudeKey && totalClassified > 0) {
+    try {
+      const biddingCfg = await getConfigSection("bidding");
+      if (biddingCfg.autoBidEnabled) {
+        const autoBidThreshold = biddingCfg.autoBidMinScore ?? 90;
+
+        // Find recently classified tenders that scored above auto-bid threshold
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        const { data: highScorers } = await supabase
+          .from("tenders")
+          .select("id, title, description, department, estimated_value, closing_date, computed_score, ai_score, ai_categories, competitor_count, bid_complexity, ai_fulfillment, category, external_id, source")
+          .gte("updated_at", twoHoursAgo)
+          .gte("computed_score", autoBidThreshold)
+          .eq("status", "open")
+          .order("computed_score", { ascending: false })
+          .limit(10);
+
+        if (highScorers && highScorers.length > 0) {
+          console.log(`Auto-bid: ${highScorers.length} tenders scored >= ${autoBidThreshold}, generating drafts...`);
+
+          for (const row of highScorers) {
+            try {
+              // Skip if already queued
+              const alreadyQueued = await isTenderQueued(row.id as string);
+              if (alreadyQueued) continue;
+
+              // Build a Tender-like object for queueForAutoBid
+              const tenderForBid = {
+                id: row.id as string,
+                title: row.title as string,
+                description: (row.description as string) || "",
+                department: (row.department as string) || "",
+                estimatedValue: Number(row.estimated_value ?? 0),
+                closingDate: (row.closing_date as string) || "",
+                aiScore: Number(row.ai_score ?? 0),
+                computedScore: Number(row.computed_score ?? 0),
+                aiCategories: (row.ai_categories as string[]) || [],
+                competitorCount: Number(row.competitor_count ?? 0),
+                bidComplexity: (row.bid_complexity as string) || "Medium",
+                aiFulfillment: row.ai_fulfillment,
+                category: (row.category as string) || "",
+                externalId: (row.external_id as string) || "",
+                source: (row.source as string) || "",
+                blockers: [],
+              } as unknown as Tender;
+
+              // Queue the tender
+              const queueItem = await queueForAutoBid(tenderForBid);
+              if (!queueItem) continue;
+              autoBidsQueued++;
+
+              // Generate the bid draft via Claude
+              try {
+                const bidResult = await generateBidResponse(
+                  tenderForBid.title,
+                  tenderForBid.description,
+                  tenderForBid.department,
+                  "", // requirements
+                  tenderForBid.estimatedValue
+                );
+
+                await attachBidDraft(queueItem.id, {
+                  complianceMatrix: bidResult.complianceMatrix,
+                  proposalSections: bidResult.proposalSections,
+                  pricingModel: bidResult.pricingModel,
+                });
+                autoBidsDrafted++;
+
+                // Rate-limit between bid generations
+                await sleep(CLASSIFY_DELAY_MS);
+              } catch (bidErr) {
+                const errMsg = String(bidErr);
+                if (errMsg.includes("429") || errMsg.includes("rate")) {
+                  errors.push("Claude rate limit during auto-bid generation");
+                  break;
+                }
+                console.warn(`Auto-bid draft failed for ${tenderForBid.title}:`, bidErr);
+              }
+            } catch (queueErr) {
+              console.warn("Auto-bid queue error:", queueErr);
+            }
+          }
+
+          if (autoBidsQueued > 0) {
+            console.log(`Auto-bid: queued ${autoBidsQueued}, drafted ${autoBidsDrafted}`);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-bid step failed:", err);
+      errors.push(`Auto-bid: ${String(err)}`);
+    }
+  }
+
+  // ─── 6. Log the refresh ────────────────────────────────────
   const duration = Date.now() - startTime;
   const totalFetched = stats.canadabuys.fetched + stats.merx.fetched + stats.samgov.fetched;
   const totalNew = stats.canadabuys.new + stats.merx.new + stats.samgov.new;
@@ -170,7 +312,7 @@ export async function GET(request: NextRequest) {
     error: errors.length > 0 ? errors.join("; ") : null,
   });
 
-  // ─── 5. Auto-trigger notifications if new tenders found ────
+  // ─── 7. Auto-trigger notifications if new tenders found ────
   if (totalNew > 0) {
     try {
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL
@@ -199,6 +341,9 @@ export async function GET(request: NextRequest) {
     totalFetched,
     totalNew,
     totalClassified,
+    autoBidsQueued,
+    autoBidsDrafted,
+    emailAlertsSent,
     durationMs: duration,
     errors: errors.length > 0 ? errors : undefined,
   });
